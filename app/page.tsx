@@ -1,0 +1,653 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import Sidebar from '@/components/Sidebar';
+import DropZone from '@/components/DropZone';
+import AudioPlayer from '@/components/AudioPlayer';
+import SRTEditor from '@/components/SRTEditor';
+import TranslationPanel from '@/components/TranslationPanel';
+import NotionExportPanel from '@/components/NotionExportPanel';
+import { api } from '@/lib/api/transcription';
+import { Job, AudioInfo, SRTSegment } from '@/lib/types';
+
+export default function Home() {
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [currentJob, setCurrentJob] = useState<Job | null>(null);
+  const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
+  const [segments, setSegments] = useState<SRTSegment[]>([]);
+  const [translatedSegments, setTranslatedSegments] = useState<Record<string, SRTSegment[]>>({});
+  const [status, setStatus] = useState<string>('');
+  const [startTime, setStartTime] = useState<number>(0);
+  const [endTime, setEndTime] = useState<number>(0);
+  const [initialStartTime, setInitialStartTime] = useState<number>(0);
+  const [initialEndTime, setInitialEndTime] = useState<number>(0);
+  const [maxWords, setMaxWords] = useState<number>(5);
+  const [maxChars, setMaxChars] = useState<number>(24);
+  const [dryRun, setDryRun] = useState<boolean>(false);
+  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [engine, setEngine] = useState<'whisper_gemini' | 'scribe_v2'>('whisper_gemini');
+  const [keyterms, setKeyterms] = useState<string>('');
+  const [isGeneratingSRT, setIsGeneratingSRT] = useState<boolean>(false);
+
+  const currentJobData = jobs.find(j => j.id === currentJobId) || currentJob;
+
+  // Fonction helper pour formater les secondes en MM:SS
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setStatus('📤 Upload en cours...');
+    
+    try {
+      const data = await api.uploadFile(file);
+      const newJob = { 
+        id: data.job_id, 
+        filename: file.name, 
+        status: 'uploaded' 
+      };
+      
+      setJobs(prev => [...prev, newJob]);
+      setCurrentJobId(data.job_id);
+      
+      // Récupérer info audio
+      const info = await api.getAudioInfo(data.job_id);
+      setAudioInfo(info);
+      // Initialiser les sliders avec la durée complète
+      const duration = info.duration_sec;
+      setStartTime(0);
+      setEndTime(duration);
+      setInitialStartTime(0);
+      setInitialEndTime(duration);
+      setStatus(`⏱️ Durée: ${formatTime(info.duration_sec)}`);
+    } catch (error) {
+      setStatus(`❌ Erreur: ${error}`);
+    }
+  };
+
+  const handleGenerateSRT = async () => {
+    if (!currentJobId) return;
+    
+    const engineLabel = engine === 'scribe_v2' ? 'Scribe v2' : 'Whisper + Gemini';
+    setStatus(
+      dryRun
+        ? `🧪 Transcription ${engineLabel} (dry run)...`
+        : `🪄 Transcription ${engineLabel}...`
+    );
+    setIsGeneratingSRT(true);
+    
+    // Vérifier si l'intervalle a été modifié
+    const rangeModified = startTime !== initialStartTime || endTime !== initialEndTime;
+    
+    try {
+      const result = await api.generateSRT(
+        currentJobId,
+        rangeModified ? startTime : undefined,
+        rangeModified ? endTime : undefined,
+        maxWords,
+        maxChars,
+        dryRun,
+        engine,
+        keyterms || undefined
+      );
+      
+      if (dryRun && result?.srt) {
+        // En dry run, on ne touche pas Supabase, on parse directement le SRT retourné
+        const parsed = parseSRT(result.srt as string);
+        setSegments(parsed);
+        setStatus(`✅ Dry run terminé (${engineLabel}, SRT non sauvegardé en base)`);
+        return;
+      }
+
+      await loadJob(currentJobId);
+    } catch (error) {
+      setStatus(`❌ Erreur: ${error}`);
+    } finally {
+      setIsGeneratingSRT(false);
+    }
+  };
+
+  const loadJob = async (jobId: string) => {
+    try {
+      const job = await api.getJob(jobId);
+      
+      if (job.error) {
+        setStatus(`❌ Erreur: ${job.error}`);
+        return;
+      }
+      
+      setCurrentJob(job);
+      
+      // Réinitialiser les segments traduits
+      setTranslatedSegments({});
+      setTranslations({});
+      
+      if (job.srt_url) {
+        setStatus('✅ Prêt !');
+        await loadSRT(api.getSRTUrl(job.srt_url));
+      }
+      
+      // Charger les traductions existantes si disponibles
+      if (job.translations) {
+        try {
+          const translationsObj = JSON.parse(job.translations) as Record<string, string>;
+          setTranslations(translationsObj);
+          
+          // Charger les segments traduits
+          const newTranslatedSegments: Record<string, SRTSegment[]> = {};
+          for (const [lang, url] of Object.entries(translationsObj)) {
+            try {
+              const srtText = await loadSRTFromUrl(api.getSRTUrl(url as string));
+              newTranslatedSegments[lang] = parseSRT(srtText);
+            } catch (error) {
+              console.error(`Erreur chargement SRT ${lang}:`, error);
+            }
+          }
+          setTranslatedSegments(newTranslatedSegments);
+        } catch (error) {
+          console.error('Erreur parsing translations:', error);
+        }
+      }
+      
+      // Update dans la liste
+      setJobs(prev => {
+        const idx = prev.findIndex(j => j.id === jobId);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = job;
+          return updated;
+        }
+        return prev;
+      });
+    } catch (error) {
+      setStatus(`❌ Erreur: ${error}`);
+    }
+  };
+
+  const loadSRT = async (url: string) => {
+    try {
+      const res = await fetch(url);
+      const text = await res.text();
+      const parsed = parseSRT(text);
+      setSegments(parsed);
+    } catch (error) {
+      console.error('Erreur chargement SRT:', error);
+    }
+  };
+
+  const parseSRT = (text: string): SRTSegment[] => {
+    const blocks = text.trim().split('\n\n');
+    return blocks.map(block => {
+      const lines = block.split('\n');
+      return {
+        index: lines[0],
+        time: lines[1],
+        text: lines.slice(2).join('\n')
+      };
+    });
+  };
+
+  const handleSegmentChange = (index: number, field: 'text' | 'time', value: string) => {
+    setSegments(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+  };
+
+  const handleDownload = (segmentsToDownload: SRTSegment[], filename: string = 'subtitles.srt') => {
+    const srtContent = segmentsToDownload.map((seg, idx) => 
+      `${idx + 1}\n${seg.time}\n${seg.text}\n`
+    ).join('\n');
+    
+    const blob = new Blob([srtContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadOriginal = () => {
+    handleDownload(segments, 'subtitles.srt');
+  };
+
+  const handleDownloadTranslated = (lang: string) => {
+    const langNames: Record<string, string> = {
+      'en': 'Anglais',
+      'nl': 'Neerlandais',
+      'es': 'Espagnol',
+      'de': 'Allemand',
+      'fr': 'Francais'
+    };
+    const langName = langNames[lang] || lang;
+    handleDownload(translatedSegments[lang], `subtitles_${langName}.srt`);
+  };
+
+  const handleTranslatedSegmentChange = (lang: string, index: number, field: 'text' | 'time', value: string) => {
+    setTranslatedSegments(prev => {
+      const updated = { ...prev };
+      if (updated[lang]) {
+        updated[lang] = [...updated[lang]];
+        updated[lang][index] = { ...updated[lang][index], [field]: value };
+      }
+      return updated;
+    });
+  };
+
+  const handleTranslate = async (languages: string[], method: 'classic' | 'strict') => {
+    if (!currentJobId) return;
+    
+    setIsTranslating(true);
+    setStatus('🌍 Traduction en cours...');
+    
+    try {
+      const data = await api.translateSRT(currentJobId, languages, method);
+      
+      if (data.error) {
+        setStatus(`❌ Erreur: ${data.error}`);
+      } else {
+        setTranslations(data.translations);
+        setStatus('✅ Traductions terminées !');
+        
+        // Charger les SRT traduits
+        const newTranslatedSegments: Record<string, SRTSegment[]> = {};
+        for (const [lang, url] of Object.entries(data.translations)) {
+          try {
+            const srtText = await loadSRTFromUrl(api.getSRTUrl(url as string));
+            newTranslatedSegments[lang] = parseSRT(srtText);
+          } catch (error) {
+            console.error(`Erreur chargement SRT ${lang}:`, error);
+          }
+        }
+        setTranslatedSegments(prev => ({ ...prev, ...newTranslatedSegments }));
+      }
+    } catch (error) {
+      setStatus(`❌ Erreur: ${error}`);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  const loadSRTFromUrl = async (url: string): Promise<string> => {
+    const res = await fetch(url);
+    return res.text();
+  };
+
+  return (
+    <div className="flex h-screen">
+      <Sidebar 
+        jobs={jobs}
+        currentJobId={currentJobId}
+        onSelectJob={(id) => {
+          setCurrentJobId(id);
+          loadJob(id);
+        }}
+      />
+      
+      <div className="flex-1 p-8 overflow-y-auto bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 bg-clip-text text-transparent">
+            DuckCaption 🦆
+          </h1>
+          <p className="text-gray-600 text-sm">Transcription et traduction de sous-titres intelligente</p>
+        </div>
+        
+        <DropZone onFileSelected={handleFileUpload} />
+        
+        {status && (
+          <div className="mt-6 p-4 bg-white rounded-xl border border-gray-200/80 shadow-md text-gray-900 backdrop-blur-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">{status}</span>
+            </div>
+          </div>
+        )}
+        
+        <div className="mt-6 p-8 bg-white rounded-2xl border border-gray-200/80 shadow-lg shadow-gray-200/50 backdrop-blur-sm">
+          <div className="flex items-center gap-3 mb-8 pb-4 border-b border-gray-200">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+              </svg>
+            </div>
+            <h4 className="text-2xl font-bold text-gray-900">Options de transcription</h4>
+          </div>
+          
+          {/* Slider d'intervalle de transcription */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <label className="text-base font-semibold text-gray-900">
+                Intervalle à transcrire
+              </label>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-bold text-purple-700 bg-gradient-to-r from-purple-100 to-purple-50 px-4 py-1.5 rounded-lg border border-purple-200 shadow-sm">
+                  {formatTime(startTime)}
+                </span>
+                <span className="text-gray-400 text-lg">→</span>
+                <span className="text-sm font-bold text-purple-700 bg-gradient-to-r from-purple-100 to-purple-50 px-4 py-1.5 rounded-lg border border-purple-200 shadow-sm">
+                  {formatTime(endTime)}
+                </span>
+              </div>
+            </div>
+            
+            {audioInfo ? (
+              <>
+                <div className="mb-4 p-4 bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl border border-purple-100">
+                  <label className="text-xs font-semibold text-gray-700 mb-2 block">Début</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max={audioInfo.duration_sec}
+                    step="0.1"
+                    value={Math.min(startTime, endTime - 0.1)}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setStartTime(Math.min(val, endTime - 0.1));
+                    }}
+                    className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-purple-600 hover:accent-purple-700 transition-colors"
+                  />
+                </div>
+                <div className="mb-4 p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border border-blue-100">
+                  <label className="text-xs font-semibold text-gray-700 mb-2 block">Fin</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max={audioInfo.duration_sec}
+                    step="0.1"
+                    value={endTime}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setEndTime(Math.max(val, startTime + 0.1));
+                    }}
+                    className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-600 hover:accent-blue-700 transition-colors"
+                  />
+                </div>
+                <div className="flex justify-between text-xs font-medium text-gray-600 mt-2 px-1">
+                  <span>0:00</span>
+                  <span>{formatTime(audioInfo.duration_sec)}</span>
+                </div>
+                <div className="mt-4 p-3 bg-blue-50/80 rounded-lg border border-blue-100">
+                  <small className="block text-gray-700 text-xs font-medium">
+                    {startTime === initialStartTime && endTime === initialEndTime 
+                      ? "💡 Intervalle complet sélectionné (sera ignoré si non modifié)" 
+                      : `📌 Intervalle personnalisé: ${formatTime(endTime - startTime)} (${(endTime - startTime).toFixed(1)}s)`}
+                  </small>
+                </div>
+              </>
+            ) : (
+              <div className="p-6 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200">
+                <p className="text-sm text-gray-600 text-center font-medium">
+                  ⏳ Chargez un fichier audio pour configurer l'intervalle
+                </p>
+              </div>
+            )}
+          </div>
+          
+          {/* Slider nombre de mots */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-base font-semibold text-gray-900">
+                Nombre maximum de mots par segment
+              </label>
+              <span className="text-sm font-bold text-blue-700 bg-gradient-to-r from-blue-100 to-blue-50 px-4 py-1.5 rounded-lg border border-blue-200 shadow-sm">
+                {maxWords} {maxWords === 1 ? 'mot' : 'mots'}
+              </span>
+            </div>
+            <div className="px-2">
+              <input
+                type="range"
+                min="1"
+                max="20"
+                value={maxWords}
+                onChange={(e) => setMaxWords(parseInt(e.target.value))}
+                className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-600 hover:accent-blue-700 transition-colors"
+              />
+              <div className="flex justify-between text-xs font-medium text-gray-600 mt-2">
+                <span>1</span>
+                <span>20</span>
+              </div>
+            </div>
+          </div>
+          
+          {/* Slider nombre de caractères */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-base font-semibold text-gray-900">
+                Nombre maximum de caractères par segment
+              </label>
+              <span className="text-sm font-bold text-emerald-700 bg-gradient-to-r from-emerald-100 to-emerald-50 px-4 py-1.5 rounded-lg border border-emerald-200 shadow-sm">
+                {maxChars} {maxChars === 1 ? 'caractère' : 'caractères'}
+              </span>
+            </div>
+            <div className="px-2">
+              <input
+                type="range"
+                min="10"
+                max="80"
+                value={maxChars}
+                onChange={(e) => setMaxChars(parseInt(e.target.value))}
+                className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-emerald-600 hover:accent-emerald-700 transition-colors"
+              />
+              <div className="flex justify-between text-xs font-medium text-gray-600 mt-2">
+                <span>10</span>
+                <span>80</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Sélection du moteur de transcription */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <label className="text-base font-semibold text-gray-900">
+                Moteur de transcription
+              </label>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => setEngine('whisper_gemini')}
+                className={`p-4 rounded-xl border-2 transition-all duration-200 text-left ${
+                  engine === 'whisper_gemini'
+                    ? 'border-blue-500 bg-blue-50 shadow-md'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      engine === 'whisper_gemini' ? 'border-blue-500' : 'border-gray-300'
+                    }`}
+                  >
+                    {engine === 'whisper_gemini' && (
+                      <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    )}
+                  </div>
+                  <span className="font-semibold text-gray-900">Whisper + Gemini</span>
+                </div>
+                <p className="text-xs text-gray-600 ml-7">
+                  Pipeline classique. Timestamps par segment, correction IA.
+                </p>
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setEngine('scribe_v2')}
+                className={`p-4 rounded-xl border-2 transition-all duration-200 text-left ${
+                  engine === 'scribe_v2'
+                    ? 'border-purple-500 bg-purple-50 shadow-md'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      engine === 'scribe_v2' ? 'border-purple-500' : 'border-gray-300'
+                    }`}
+                  >
+                    {engine === 'scribe_v2' && (
+                      <div className="w-2 h-2 rounded-full bg-purple-500" />
+                    )}
+                  </div>
+                  <span className="font-semibold text-gray-900">Scribe v2</span>
+                  <span className="text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white px-2 py-0.5 rounded-full font-medium">
+                    NEW
+                  </span>
+                </div>
+                <p className="text-xs text-gray-600 ml-7">
+                  ElevenLabs. Timestamps mot-par-mot, plus précis.
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* Keyterms (Scribe v2 uniquement) */}
+          {engine === 'scribe_v2' && (
+            <div className="mb-8 p-4 bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-200">
+              <label className="text-sm font-semibold text-gray-900 mb-2 block">
+                🔑 Termes clés (optionnel)
+              </label>
+              <input
+                type="text"
+                value={keyterms}
+                onChange={(e) => setKeyterms(e.target.value)}
+                placeholder="Ex: Anthropic, Claude, Kerelia (séparés par des virgules)"
+                className="w-full px-4 py-2 rounded-lg border border-purple-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all text-gray-900 text-sm"
+              />
+              <p className="text-xs text-gray-600 mt-2">
+                Aide le modèle à reconnaître des noms propres, marques ou termes techniques.
+              </p>
+            </div>
+          )}
+
+          {/* Option dry run */}
+          <div className="mb-4 flex items-center gap-3">
+            <input
+              id="dry-run"
+              type="checkbox"
+              checked={dryRun}
+              onChange={(e) => setDryRun(e.target.checked)}
+              className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="dry-run" className="text-sm text-gray-800">
+              Utiliser le mode <span className="font-semibold">dry run</span> (ne pas enregistrer dans Supabase, juste récupérer le SRT pour les tests)
+            </label>
+          </div>
+          
+          <div className="mt-6 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-200/80 shadow-sm">
+            <p className="text-sm text-gray-800 font-medium">
+              <strong className="text-blue-700">💡 Note :</strong> Les segments dépassant les limites seront automatiquement divisés avec des timestamps proportionnels.
+            </p>
+            <p className="text-xs text-gray-600 mt-2 font-medium">
+              L'intervalle ne sera utilisé que s'il a été modifié de sa position initiale.
+            </p>
+          </div>
+          
+          {currentJobId && (
+            <button
+              onClick={handleGenerateSRT}
+              disabled={isGeneratingSRT}
+              className="mt-8 w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed transition-all duration-200 font-bold shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 hover:scale-[1.02] active:scale-98 text-lg disabled:hover:scale-100"
+            >
+              {isGeneratingSRT ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Transcription en cours...</span>
+                </span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Lancer transcription
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+        
+        {segments.length > 0 && currentJobId && (
+          <div className="mt-8 space-y-8">
+            <AudioPlayer audioUrl={api.getAudioUrl(currentJobId)} />
+            
+            <div>
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900">Sous-titres originaux</h3>
+              </div>
+              <SRTEditor
+                segments={segments}
+                onSegmentChange={handleSegmentChange}
+                onDownload={handleDownloadOriginal}
+              />
+            </div>
+            
+            {Object.keys(translatedSegments).length > 0 && (
+              <div className="space-y-8">
+                {Object.entries(translatedSegments).map(([lang, langSegments]) => {
+                  const langNames: Record<string, string> = {
+                    'en': 'Anglais',
+                    'nl': 'Néerlandais',
+                    'es': 'Espagnol',
+                    'de': 'Allemand',
+                    'fr': 'Français'
+                  };
+                  const langName = langNames[lang] || lang.toUpperCase();
+                  
+                  return (
+                    <div key={lang}>
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-md">
+                          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                          </svg>
+                        </div>
+                        <h3 className="text-2xl font-bold text-gray-900">
+                          Sous-titres traduits ({langName})
+                        </h3>
+                      </div>
+                      <SRTEditor
+                        segments={langSegments}
+                        onSegmentChange={(index, field, value) => handleTranslatedSegmentChange(lang, index, field, value)}
+                        onDownload={() => handleDownloadTranslated(lang)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            
+            {currentJobData?.srt_url && (
+              <>
+                <TranslationPanel
+                  jobId={currentJobId}
+                  onTranslate={handleTranslate}
+                  translations={translations}
+                  isTranslating={isTranslating}
+                />
+                
+                <NotionExportPanel
+                  segments={segments}
+                  jobId={currentJobId}
+                  filename={currentJobData?.filename}
+                />
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
