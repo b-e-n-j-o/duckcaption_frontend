@@ -24,10 +24,9 @@ export default function Home() {
   const [initialEndTime, setInitialEndTime] = useState<number>(0);
   const [maxWords, setMaxWords] = useState<number>(5);
   const [maxChars, setMaxChars] = useState<number>(24);
-  const [dryRun, setDryRun] = useState<boolean>(false);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [isTranslating, setIsTranslating] = useState(false);
-  const [engine, setEngine] = useState<'whisper_gemini' | 'scribe_v2'>('whisper_gemini');
+  const [engine, setEngine] = useState<'whisper_gemini' | 'scribe_v2'>('scribe_v2');
   const [keyterms, setKeyterms] = useState<string>('');
   const [isGeneratingSRT, setIsGeneratingSRT] = useState<boolean>(false);
 
@@ -73,35 +72,23 @@ export default function Home() {
     if (!currentJobId) return;
     
     const engineLabel = engine === 'scribe_v2' ? 'Scribe v2' : 'Whisper + Gemini';
-    setStatus(
-      dryRun
-        ? `🧪 Transcription ${engineLabel} (dry run)...`
-        : `🪄 Transcription ${engineLabel}...`
-    );
+    setStatus(`🪄 Transcription ${engineLabel}...`);
     setIsGeneratingSRT(true);
     
     // Vérifier si l'intervalle a été modifié
     const rangeModified = startTime !== initialStartTime || endTime !== initialEndTime;
     
     try {
-      const result = await api.generateSRT(
+      await api.generateSRT(
         currentJobId,
         rangeModified ? startTime : undefined,
         rangeModified ? endTime : undefined,
         maxWords,
         maxChars,
-        dryRun,
+        false,
         engine,
         keyterms || undefined
       );
-      
-      if (dryRun && result?.srt) {
-        // En dry run, on ne touche pas Supabase, on parse directement le SRT retourné
-        const parsed = parseSRT(result.srt as string);
-        setSegments(parsed);
-        setStatus(`✅ Dry run terminé (${engineLabel}, SRT non sauvegardé en base)`);
-        return;
-      }
 
       await loadJob(currentJobId);
     } catch (error) {
@@ -516,7 +503,7 @@ export default function Home() {
                 type="text"
                 value={keyterms}
                 onChange={(e) => setKeyterms(e.target.value)}
-                placeholder="Ex: Anthropic, Claude, Kerelia (séparés par des virgules)"
+                placeholder="Ex: Duckmotion, AXA , Nauticare...(séparés par des virgules)"
                 className="w-full px-4 py-2 rounded-lg border border-purple-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all text-gray-900 text-sm"
               />
               <p className="text-xs text-gray-600 mt-2">
@@ -525,28 +512,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Option dry run */}
-          <div className="mb-4 flex items-center gap-3">
-            <input
-              id="dry-run"
-              type="checkbox"
-              checked={dryRun}
-              onChange={(e) => setDryRun(e.target.checked)}
-              className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-            />
-            <label htmlFor="dry-run" className="text-sm text-gray-800">
-              Utiliser le mode <span className="font-semibold">dry run</span> (ne pas enregistrer dans Supabase, juste récupérer le SRT pour les tests)
-            </label>
-          </div>
-          
-          <div className="mt-6 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-200/80 shadow-sm">
-            <p className="text-sm text-gray-800 font-medium">
-              <strong className="text-blue-700">💡 Note :</strong> Les segments dépassant les limites seront automatiquement divisés avec des timestamps proportionnels.
-            </p>
-            <p className="text-xs text-gray-600 mt-2 font-medium">
-              L'intervalle ne sera utilisé que s'il a été modifié de sa position initiale.
-            </p>
-          </div>
           
           {currentJobId && (
             <button
