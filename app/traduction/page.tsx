@@ -23,6 +23,7 @@ export default function TraductionPage() {
   const [translatedSegments, setTranslatedSegments] = useState<Record<string, SRTSegment[]>>({});
   const [selectedLangs, setSelectedLangs] = useState<string[]>([]);
   const [maxWords, setMaxWords] = useState<number>(10);
+  const [isTranslating, setIsTranslating] = useState<boolean>(false);
 
   const parseSRT = (text: string): SRTSegment[] => {
     const blocks = text.trim().split('\n\n');
@@ -70,6 +71,7 @@ export default function TraductionPage() {
     }
 
     setStatus('🌍 Traduction en cours...');
+    setIsTranslating(true);
 
     try {
       const data = await api.translateSRTContent(
@@ -95,6 +97,8 @@ export default function TraductionPage() {
       setStatus('✅ Traduction terminée');
     } catch (error) {
       setStatus(`❌ Erreur: ${error}`);
+    } finally {
+      setIsTranslating(false);
     }
   };
 
@@ -184,10 +188,20 @@ export default function TraductionPage() {
           <button
             type="button"
             onClick={handleTranslate}
-            disabled={!originalSRT || selectedLangs.length === 0}
+            disabled={!originalSRT || selectedLangs.length === 0 || isTranslating}
             className="w-full mt-2 px-6 py-3.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed transition-all duration-200 font-bold shadow-lg shadow-green-500/30 hover:shadow-xl hover:shadow-green-500/40 hover:scale-[1.02] active:scale-98 disabled:hover:scale-100"
           >
-            Lancer la traduction
+            {isTranslating ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Traduction en cours...
+              </span>
+            ) : (
+              'Lancer la traduction'
+            )}
           </button>
         </div>
 
