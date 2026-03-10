@@ -22,8 +22,7 @@ export default function TraductionPage() {
   const [originalSegments, setOriginalSegments] = useState<SRTSegment[]>([]);
   const [translatedSegments, setTranslatedSegments] = useState<Record<string, SRTSegment[]>>({});
   const [selectedLangs, setSelectedLangs] = useState<string[]>([]);
-  const [method, setMethod] = useState<'classic' | 'v2'>('classic');
-  const [maxWords, setMaxWords] = useState<number>(10); // Pour future méthode v2
+  const [maxWords, setMaxWords] = useState<number>(10);
 
   const parseSRT = (text: string): SRTSegment[] => {
     const blocks = text.trim().split('\n\n');
@@ -70,17 +69,13 @@ export default function TraductionPage() {
       return;
     }
 
-    setStatus(
-      method === 'classic'
-        ? '🌍 Traduction classique en cours...'
-        : '🧪 Traduction V2 (stub) en cours...'
-    );
+    setStatus('🌍 Traduction en cours...');
 
     try {
       const data = await api.translateSRTContent(
         originalSRT,
         selectedLangs,
-        method === 'classic' ? 'classic' : 'strict',
+        'strict',
         maxWords
       );
 
@@ -138,34 +133,6 @@ export default function TraductionPage() {
 
         <div className="mt-6 p-6 bg-white rounded-2xl border border-gray-200 shadow-md space-y-6">
           <div className="flex flex-wrap items-center gap-6">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                Méthode de traduction
-              </h2>
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 text-sm text-gray-800">
-                  <input
-                    type="radio"
-                    name="method"
-                    value="classic"
-                    checked={method === 'classic'}
-                    onChange={() => setMethod('classic')}
-                  />
-                  <span>Classique (actuelle)</span>
-                </label>
-                <label className="flex items-center gap-2 text-sm text-gray-800">
-                  <input
-                    type="radio"
-                    name="method"
-                    value="v2"
-                    checked={method === 'v2'}
-                    onChange={() => setMethod('v2')}
-                  />
-                  <span>V2 (à venir, mockée)</span>
-                </label>
-              </div>
-            </div>
-
             <div className="flex-1 min-w-[220px]">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-semibold text-gray-900">
@@ -184,7 +151,7 @@ export default function TraductionPage() {
                 className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-600 hover:accent-blue-700 transition-colors"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Ce paramètre sera utilisé par la méthode V2 pour contrôler la longueur des segments.
+                Contrôle la longueur maximale des segments traduits.
               </p>
             </div>
           </div>

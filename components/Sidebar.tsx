@@ -21,18 +21,17 @@ export default function Sidebar({ jobs, currentJobId, onSelectJob }: SidebarProp
         </Link>
 
         <Link
-          href="/vimeo"
-          className="block px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 transition"
-        >
-          🎬 Upload vidéo
-        </Link>
-
-        <Link
           href="/traduction"
           className="block px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 transition"
         >
           🌍 Traduction SRT
         </Link>
+
+        <span
+          className="block px-4 py-3 rounded-lg bg-slate-800/50 text-gray-500 cursor-not-allowed grayscale opacity-70"
+        >
+          🎬 Upload vidéo
+        </span>
       </div>
 
       <div className="mb-8">
