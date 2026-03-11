@@ -12,7 +12,7 @@ interface DropZoneProps {
 export default function DropZone({ 
   onFileSelected,
   accept = 'audio/*,video/*',
-  title = 'Déposez un fichier audio/vidéo',
+  title = '1. Déposez un fichier audio/vidéo',
   subtitle = 'ou cliquez pour sélectionner',
 }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);

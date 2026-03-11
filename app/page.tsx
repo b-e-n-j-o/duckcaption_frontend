@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Sidebar from '@/components/Sidebar';
 import DropZone from '@/components/DropZone';
 import AudioPlayer from '@/components/AudioPlayer';
@@ -31,6 +31,14 @@ export default function Home() {
   const [isGeneratingSRT, setIsGeneratingSRT] = useState<boolean>(false);
 
   const currentJobData = jobs.find(j => j.id === currentJobId) || currentJob;
+
+  const subtitlesRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (segments.length > 0 && subtitlesRef.current) {
+      subtitlesRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [segments.length, currentJobId]);
 
   // Fonction helper pour formater les secondes en MM:SS
   const formatTime = (seconds: number): string => {
@@ -309,7 +317,7 @@ export default function Home() {
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <label className="text-base font-semibold text-gray-900">
-                Intervalle à transcrire
+                2. Intervalle à transcrire
               </label>
               <div className="flex items-center gap-3">
                 <span className="text-sm font-bold text-purple-700 bg-gradient-to-r from-purple-100 to-purple-50 px-4 py-1.5 rounded-lg border border-purple-200 shadow-sm">
@@ -361,7 +369,7 @@ export default function Home() {
                 <div className="mt-4 p-3 bg-blue-50/80 rounded-lg border border-blue-100">
                   <small className="block text-gray-700 text-xs font-medium">
                     {startTime === initialStartTime && endTime === initialEndTime 
-                      ? "💡 Intervalle complet sélectionné (sera ignoré si non modifié)" 
+                      ? "💡 Audio entier sélectionné (ajuster l'intervalle si nécessaire)" 
                       : `📌 Intervalle personnalisé: ${formatTime(endTime - startTime)} (${(endTime - startTime).toFixed(1)}s)`}
                   </small>
                 </div>
@@ -379,7 +387,7 @@ export default function Home() {
           <div className="mb-8">
             <div className="flex items-center justify-between mb-3">
               <label className="text-base font-semibold text-gray-900">
-                Nombre maximum de mots par segment
+                3. Nombre maximum de mots par segment
               </label>
               <span className="text-sm font-bold text-blue-700 bg-gradient-to-r from-blue-100 to-blue-50 px-4 py-1.5 rounded-lg border border-blue-200 shadow-sm">
                 {maxWords} {maxWords === 1 ? 'mot' : 'mots'}
@@ -405,7 +413,7 @@ export default function Home() {
           <div className="mb-8">
             <div className="flex items-center justify-between mb-3">
               <label className="text-base font-semibold text-gray-900">
-                Nombre maximum de caractères par segment
+                4. Nombre maximum de caractères par segment
               </label>
               <span className="text-sm font-bold text-emerald-700 bg-gradient-to-r from-emerald-100 to-emerald-50 px-4 py-1.5 rounded-lg border border-emerald-200 shadow-sm">
                 {maxChars} {maxChars === 1 ? 'caractère' : 'caractères'}
@@ -431,7 +439,7 @@ export default function Home() {
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <label className="text-base font-semibold text-gray-900">
-                Moteur de transcription
+                5. Moteur de transcription
               </label>
             </div>
             
@@ -458,7 +466,7 @@ export default function Home() {
                   <span className="font-semibold text-gray-900">Whisper + Gemini</span>
                 </div>
                 <p className="text-xs text-gray-600 ml-7">
-                  Pipeline classique. Timestamps par segment, correction IA.
+                  Modèle classique. Timestamps par segment seulement, correction IA.
                 </p>
               </button>
               
@@ -487,7 +495,7 @@ export default function Home() {
                   </span>
                 </div>
                 <p className="text-xs text-gray-600 ml-7">
-                  ElevenLabs. Timestamps mot-par-mot, plus précis.
+                  Plus rapide. Timestamps mot-par-mot possible, plus précis.
                 </p>
               </button>
             </div>
@@ -497,7 +505,7 @@ export default function Home() {
           {engine === 'scribe_v2' && (
             <div className="mb-8 p-4 bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-200">
               <label className="text-sm font-semibold text-gray-900 mb-2 block">
-                🔑 Termes clés (optionnel)
+                6. Termes clés (optionnel)
               </label>
               <input
                 type="text"
@@ -540,7 +548,7 @@ export default function Home() {
         </div>
         
         {segments.length > 0 && currentJobId && (
-          <div className="mt-8 space-y-8">
+          <div ref={subtitlesRef} className="mt-8 space-y-8">
             <AudioPlayer audioUrl={api.getAudioUrl(currentJobId)} />
             
             <div>
