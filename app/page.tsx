@@ -24,11 +24,12 @@ export default function Home() {
   const [initialEndTime, setInitialEndTime] = useState<number>(0);
   const [maxWords, setMaxWords] = useState<number>(5);
   const [maxChars, setMaxChars] = useState<number>(24);
+  const [maxCharsPerLine, setMaxCharsPerLine] = useState<number>(42);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [isTranslating, setIsTranslating] = useState(false);
-  const [engine, setEngine] = useState<'whisper_gemini' | 'scribe_v2'>('scribe_v2');
   const [keyterms, setKeyterms] = useState<string>('');
   const [isGeneratingSRT, setIsGeneratingSRT] = useState<boolean>(false);
+  const [currentFilename, setCurrentFilename] = useState<string>('subtitles.srt');
 
   const currentJobData = jobs.find(j => j.id === currentJobId) || currentJob;
 
@@ -79,24 +80,28 @@ export default function Home() {
   const handleGenerateSRT = async () => {
     if (!currentJobId) return;
     
-    const engineLabel = engine === 'scribe_v2' ? 'Scribe v2' : 'Whisper + Gemini';
-    setStatus(`🪄 Transcription ${engineLabel}...`);
+    setStatus('🪄 Transcription Scribe v2...');
     setIsGeneratingSRT(true);
     
     // Vérifier si l'intervalle a été modifié
     const rangeModified = startTime !== initialStartTime || endTime !== initialEndTime;
     
     try {
-      await api.generateSRT(
+      const result = await api.generateSRT(
         currentJobId,
         rangeModified ? startTime : undefined,
         rangeModified ? endTime : undefined,
         maxWords,
         maxChars,
+        maxCharsPerLine,
         false,
-        engine,
+        'scribe_v2',
         keyterms || undefined
       );
+
+      if (result?.filename) {
+        setCurrentFilename(result.filename);
+      }
 
       await loadJob(currentJobId);
     } catch (error) {
@@ -209,19 +214,14 @@ export default function Home() {
   };
 
   const handleDownloadOriginal = () => {
-    handleDownload(segments, 'subtitles.srt');
+    handleDownload(segments, currentFilename);
   };
 
   const handleDownloadTranslated = (lang: string) => {
-    const langNames: Record<string, string> = {
-      'en': 'Anglais',
-      'nl': 'Neerlandais',
-      'es': 'Espagnol',
-      'de': 'Allemand',
-      'fr': 'Francais'
-    };
-    const langName = langNames[lang] || lang;
-    handleDownload(translatedSegments[lang], `subtitles_${langName}.srt`);
+    const baseAudioName = currentJobData?.filename
+      ? currentJobData.filename.replace(/\.[^/.]+$/, '')
+      : 'subtitles';
+    handleDownload(translatedSegments[lang], `${baseAudioName}_${lang}.srt`);
   };
 
   const handleTranslatedSegmentChange = (lang: string, index: number, field: 'text' | 'time', value: string) => {
@@ -435,90 +435,48 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Sélection du moteur de transcription */}
+          {/* Slider nombre de caractères par ligne */}
           <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <label className="text-base font-semibold text-gray-900">
-                5. Moteur de transcription
+                5. Nombre maximum de caractères par ligne avant d'aller à la ligne
               </label>
+              <span className="text-sm font-bold text-indigo-700 bg-gradient-to-r from-indigo-100 to-indigo-50 px-4 py-1.5 rounded-lg border border-indigo-200 shadow-sm">
+                {maxCharsPerLine} {maxCharsPerLine === 1 ? 'caractère' : 'caractères'}
+              </span>
             </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                type="button"
-                onClick={() => setEngine('whisper_gemini')}
-                className={`p-4 rounded-xl border-2 transition-all duration-200 text-left ${
-                  engine === 'whisper_gemini'
-                    ? 'border-blue-500 bg-blue-50 shadow-md'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <div
-                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      engine === 'whisper_gemini' ? 'border-blue-500' : 'border-gray-300'
-                    }`}
-                  >
-                    {engine === 'whisper_gemini' && (
-                      <div className="w-2 h-2 rounded-full bg-blue-500" />
-                    )}
-                  </div>
-                  <span className="font-semibold text-gray-900">Whisper + Gemini</span>
-                </div>
-                <p className="text-xs text-gray-600 ml-7">
-                  Modèle classique. Timestamps par segment seulement, correction IA.
-                </p>
-              </button>
-              
-              <button
-                type="button"
-                onClick={() => setEngine('scribe_v2')}
-                className={`p-4 rounded-xl border-2 transition-all duration-200 text-left ${
-                  engine === 'scribe_v2'
-                    ? 'border-purple-500 bg-purple-50 shadow-md'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <div
-                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      engine === 'scribe_v2' ? 'border-purple-500' : 'border-gray-300'
-                    }`}
-                  >
-                    {engine === 'scribe_v2' && (
-                      <div className="w-2 h-2 rounded-full bg-purple-500" />
-                    )}
-                  </div>
-                  <span className="font-semibold text-gray-900">Scribe v2</span>
-                  <span className="text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white px-2 py-0.5 rounded-full font-medium">
-                    NEW
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600 ml-7">
-                  Plus rapide. Timestamps mot-par-mot possible, plus précis.
-                </p>
-              </button>
+            <div className="px-2">
+              <input
+                type="range"
+                min="5"
+                max="50"
+                value={maxCharsPerLine}
+                onChange={(e) => setMaxCharsPerLine(parseInt(e.target.value))}
+                className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-700 transition-colors"
+              />
+              <div className="flex justify-between text-xs font-medium text-gray-600 mt-2">
+                <span>5</span>
+                <span>50</span>
+              </div>
             </div>
           </div>
 
-          {/* Keyterms (Scribe v2 uniquement) */}
-          {engine === 'scribe_v2' && (
-            <div className="mb-8 p-4 bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-200">
-              <label className="text-sm font-semibold text-gray-900 mb-2 block">
-                6. Termes clés (optionnel)
-              </label>
-              <input
-                type="text"
-                value={keyterms}
-                onChange={(e) => setKeyterms(e.target.value)}
-                placeholder="Ex: Duckmotion, AXA , Nauticare...(séparés par des virgules)"
-                className="w-full px-4 py-2 rounded-lg border border-purple-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all text-gray-900 text-sm"
-              />
-              <p className="text-xs text-gray-600 mt-2">
-                Aide le modèle à reconnaître des noms propres, marques ou termes techniques.
-              </p>
-            </div>
-          )}
+          {/* Termes clés (Scribe v2) */}
+          <div className="mb-8 p-4 bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-200">
+            <label className="text-sm font-semibold text-gray-900 mb-2 block">
+              6. Termes clés (optionnel)
+            </label>
+            <input
+              type="text"
+              value={keyterms}
+              onChange={(e) => setKeyterms(e.target.value)}
+              placeholder="Ex: Duckmotion, AXA , Nauticare...(séparés par des virgules)"
+              className="w-full px-4 py-2 rounded-lg border border-purple-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all text-gray-900 text-sm"
+            />
+            <p className="text-xs text-gray-600 mt-2">
+              Aide le modèle à reconnaître des noms propres, marques ou termes techniques.
+            </p>
+          </div>
 
           
           {currentJobId && (

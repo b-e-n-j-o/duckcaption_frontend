@@ -3,6 +3,8 @@ export interface Job {
   filename: string;
   status: string;
   srt_url?: string;
+  language?: string;
+  srt_filename?: string;
   error?: string;
   audio_url?: string;
   translations?: string; // JSON string

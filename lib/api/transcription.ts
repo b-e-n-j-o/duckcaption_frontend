@@ -27,6 +27,7 @@ export const api = {
     endTime?: number,
     maxWords?: number,
     maxChars?: number,
+    maxCharsPerLine?: number,
     dryRun: boolean = false,
     engine: 'whisper_gemini' | 'scribe_v2' = 'whisper_gemini',
     keyterms?: string
@@ -36,6 +37,9 @@ export const api = {
     if (endTime !== undefined && !isNaN(endTime)) params.append('end_time', endTime.toString());
     if (maxWords !== undefined && !isNaN(maxWords)) params.append('max_words', maxWords.toString());
     if (maxChars !== undefined && !isNaN(maxChars)) params.append('max_chars', maxChars.toString());
+    if (maxCharsPerLine !== undefined && !isNaN(maxCharsPerLine)) {
+      params.append('max_chars_per_line', maxCharsPerLine.toString());
+    }
     if (dryRun) params.append('dry_run', 'true');
     params.append('engine', engine);
     if (keyterms && engine === 'scribe_v2') {
